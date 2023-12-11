@@ -7,7 +7,7 @@ const fs = require('fs');
 
 const WaveFile = require('wavefile').WaveFile;
 const { unpackArray } = require('byte-data');
-const { createCanvas } = require('canvas');
+const { createCanvas, loadImage } = require('canvas');
 
 
 const MAX_FREQUENCY = 22000; // 22 kHz highest frequency a human can hear
@@ -125,13 +125,13 @@ function drawSpectrogram(fileName, spectrograph) {
 
     spectrograph.forEach((sequence, timeSeq) => {
         sequence.forEach((value, frequency) => {
-            let hue = Math.round((value * -1) + 200) < 0 ? 0 : Math.round((value * -1.35) + 200); // for maximum magnitude of 150 k = 1,35
+            let hue = Math.round((value * -1) + 200) < 0 ? 0 : Math.round((value * -1) + 200); // for maximum magnitude of 150 k = 1,35
             let sat = '100%';
             let lit = '50%';
-            
+
             if (value > maxValue) {
                 maxValue = value
-            }else if (value < minValue) {
+            } else if (value < minValue) {
                 minValue = value
             }
             ctx.beginPath();
@@ -153,4 +153,85 @@ function drawSpectrogram(fileName, spectrograph) {
 };
 
 
-readWav('heart-beat-137135.wav', processWav)
+function readPNGSpectrogram(fileName) {
+    const filePath = './audio-files/' + fileName
+    loadImage(filePath)
+        .then((image) => {
+            const imgHeight = image.height
+            const imgWidth = image.width
+
+            const canvas = createCanvas(imgWidth, imgHeight);
+            const ctx = canvas.getContext('2d');
+
+            ctx.drawImage(image, 0, 0);
+
+            const imageData = ctx.getImageData(0, 0, imgWidth, imgHeight).data
+
+            const splitPixels = []
+
+            for (let i = 0; i < imageData.length; i += 4) {
+                const pixel = imageData.slice(i, i + 4);
+                splitPixels.push(pixel);
+            }
+
+            const pixels = splitPixels.map(RGBToHSL)
+            console.table(pixels)
+        })
+        .catch(err => {
+            console.log('oh no!', err)
+        })
+}
+
+function RGBToHSL(pixel) {
+    // Make r, g, and b fractions of 1
+    let [r, g, b, a] = pixel
+    r /= 255;
+    g /= 255;
+    b /= 255;
+    a /= 255;
+
+    // Find greatest and smallest channel values
+    let cmin = Math.min(r, g, b)
+    let cmax = Math.max(r, g, b)
+    let delta = cmax - cmin
+    let h = 0
+    let s = 0
+    let l = 0
+
+    // Calculate hue
+    // No difference
+    if (delta == 0)
+        h = 0;
+    // Red is max
+    else if (cmax == r)
+        h = ((g - b) / delta) % 6;
+    // Green is max
+    else if (cmax == g)
+        h = (b - r) / delta + 2;
+    // Blue is max
+    else
+        h = (r - g) / delta + 4;
+
+    h = Math.round(h * 60);
+
+    // Make negative hues positive behind 360°
+    if (h < 0)
+        h += 360;
+
+    // Calculate lightness
+    l = (cmax + cmin) / 2;
+
+    // Calculate saturation
+    s = delta == 0 ? 0 : delta / (1 - Math.abs(2 * l - 1));
+
+    // Multiply l and s by 100
+    s = +(s * 100).toFixed(1);
+    l = +(l * 100).toFixed(1);
+
+    return "hsl(" + h + "," + s + "%," + l + "%)";
+}
+
+readPNGSpectrogram('heart-beat-137135.png')
+// readWav('heart-beat-137135.wav', processWav) //Transforms .wav file into .png spectrogram 
+//hsl(199, 100%, 50%)
+//0, 127, 192, 255(Alpha)
