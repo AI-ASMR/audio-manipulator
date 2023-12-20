@@ -10,8 +10,9 @@ const { unpackArray } = require('byte-data');
 const { createCanvas, loadImage } = require('canvas');
 
 
-const MAX_FREQUENCY = 22000; // 22 kHz highest frequency a human can hear
-const samplesLength = 512; // must be dividable by 2: 2^10=1024, 44100 samples/s => ~1m, 16ms
+const MAX_FREQUENCY = 26000; // 22 kHz highest frequency a human can hear. In order to make the spectrogram 128px we go pass that value.
+const samplesLength = 256; // must be dividable by 2: 2^10=1024, 44100 samples/s => ~1m, 16ms
+const pngWidth = 128; //px of segments
 
 /**
  * FFT analysis on given samples
@@ -109,6 +110,19 @@ const processWav = (fileName, wav, options = {}) => {
     } while (index < maxIndex);
 
     drawSpectrogram(fileName, spectrogram)
+
+    // let fileIndex = 0
+    // let spectrogramSegment = []
+    // for (let i = 1; i < spectrogram.length; i++) {
+    //     const sequence = spectrogram[i];
+    //     spectrogramSegment.push(sequence)
+    //     if (i && i % pngWidth == 0) {
+    //         const currentFileName = fileName.split('.').join('-' + fileIndex + '.')
+    //         fileIndex++
+    //         drawSpectrogram(currentFileName, spectrogramSegment)
+    //         spectrogramSegment = []
+    //     }
+    // }
 };
 
 function drawSpectrogram(fileName, spectrograph) {
@@ -125,9 +139,10 @@ function drawSpectrogram(fileName, spectrograph) {
 
     spectrograph.forEach((sequence, timeSeq) => {
         sequence.forEach((value, frequency) => {
-            let hue = Math.round((value * -1) + 200) < 0 ? 0 : Math.round((value * -1) + 200); // for maximum magnitude of 150 k = 1,35
-            let sat = '100%';
-            let lit = '50%';
+            if (frequency > 110) value = 0
+            let hue = 0; // for maximum magnitude of 150 k = 1,35
+            let sat = '0%';
+            let lit = (value > 100 ? 100 : value) + '%'; //100 is selected as the maximum possible magnitude
 
             if (value > maxValue) {
                 maxValue = value
@@ -141,7 +156,6 @@ function drawSpectrogram(fileName, spectrograph) {
             ctx.stroke();
         });
     });
-    console.log(maxValue, minValue);
     const outPath = './audio-files/' + fileName.replace('.wav', '.png')
     const out = fs.createWriteStream(outPath);
     const stream = canvas.createPNGStream();
@@ -231,7 +245,7 @@ function RGBToHSL(pixel) {
     return "hsl(" + h + "," + s + "%," + l + "%)";
 }
 
-readPNGSpectrogram('heart-beat-137135.png')
-// readWav('heart-beat-137135.wav', processWav) //Transforms .wav file into .png spectrogram 
+// readPNGSpectrogram('heart-beat-137135.png')
+readWav('bkvhi.wav', processWav) //Transforms .wav file into .png spectrogram 
 //hsl(199, 100%, 50%)
 //0, 127, 192, 255(Alpha)
