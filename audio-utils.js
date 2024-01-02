@@ -1,3 +1,4 @@
+const tf = require('@tensorflow/tfjs-node');
 const fs = require('fs');
 const math = require('mathjs');
 const fft = require('fft-js').fft;
@@ -17,14 +18,6 @@ function fftBinToHz(nBin, sampleRateHz, fftSize) {
 
 function hzToFFTBin(fHz, sampleRateHz, fftSize) {
     return Math.round((fHz * 2.0 * fftSize) / sampleRateHz);
-}
-
-function hanningWindow(length) {
-    const window = [];
-    for (let i = 0; i < length; i++) {
-        window.push(0.5 * (1 - Math.cos((2 * Math.PI * i) / (length - 1))));
-    }
-    return window;
 }
 
 function makeMelFilterbank(minFreqHz, maxFreqHz, melBinCount, linearBinCount, sampleRateHz) {
@@ -76,40 +69,44 @@ function makeMelFilterbank(minFreqHz, maxFreqHz, melBinCount, linearBinCount, sa
 }
 
 function stftForReconstruction(x, fftSize, hopsamp) {
-
-    // TODO NEED TO MASSIVELY OPTIMIZE THE PERFORMANCE IN THIS FUNCTION!!!
-    const window = hanningWindow(fftSize);
-    fftSize = parseInt(fftSize);
-    hopsamp = parseInt(hopsamp);
-    const stft = [];
-    for (let i = 0; i < x.length - fftSize; i += hopsamp) {
-        const segment = x.slice(i, i + fftSize);
-        const windowedSegment = math.dotMultiply(segment, window);
-        const fftResult = fft(windowedSegment);
-        stft.push(fftResult);
+    let tensor
+    if (Array.isArray(x)) {
+        tensor = tf.tensor(x)
+    } else {
+        tensor = x
     }
+    const stft = tf.signal.stft(tensor, fftSize, hopsamp)
     return stft;
 }
 
-function istftForReconstruction(X, fftSize, hopsamp) {
-    const window = hanningWindow(fftSize);
-    fftSize = parseInt(fftSize);
-    hopsamp = parseInt(hopsamp);
-    const timeSlices = X.length;
-    const lenSamples = timeSlices * hopsamp + fftSize;
-    const x = new Array(lenSamples).fill(0);
+/**
+ * Invert a STFT into a time domain signal using TensorFlow.js.
+ * 
+ * @param {tf.Tensor} spectrogram - Input spectrogram. The rows are the time slices and columns are the frequency bins.
+ * @param {number} fftSize - FFT size.
+ * @param {number} hopsamp - The hop size, in samples.
+ * @returns {tf.Tensor} - The inverse STFT as a TensorFlow.js tensor.
+ */
+function istftForReconstruction(spectrogram, fftSize, hopSamp) {
+    const fftSizeInt = parseInt(fftSize);
+    const hopSampInt = parseInt(hopSamp);
 
-    for (let n = 0; n < timeSlices; n++) {
-        const i = n * hopsamp;
-        const frame = math.ifft(X[n]);
-        for (let j = 0; j < fftSize; j++) {
-            x[i + j] += window[j] * (frame[j] ? frame[j].re : 0);
+    const window = tf.signal.hannWindow(fftSizeInt);
+
+    const timeSlices = spectrogram.shape[0];
+    const lenSamples = parseInt(timeSlices * hopSampInt + fftSizeInt - 1);
+
+    let x = new Array(lenSamples).fill(0)
+    for (let n = 0, i = 0; i < lenSamples - fftSizeInt; n++, i += hopSampInt) {
+        const values = window.mul(tf.spectral.irfft(spectrogram.slice(n, 1)))
+        const valuesData = values.dataSync()
+        for (let j = 0; j < fftSizeInt; j++) {
+            x[i + j] += valuesData[j]
         }
     }
 
     return x;
 }
-
 function getSignal(in_file, expectedSampleRate = 44100) {
     const data = fs.readFileSync(in_file);
     const wav = new Uint8Array(data);
@@ -137,26 +134,40 @@ function getSignal(in_file, expectedSampleRate = 44100) {
     }
     return res;
 }
-
+/**
+ * 
+ * @param {tf.Tensor} magnitudeSpectrogram 
+ * @param {number} fftSize 
+ * @param {number} hopsamp 
+ * @param {number} iterations 
+ * @returns {tf.Tensor}
+ */
 function reconstructSignalGriffinLim(magnitudeSpectrogram, fftSize, hopsamp, iterations) {
-    const timeSlices = magnitudeSpectrogram.length;
-    const lenSamples = timeSlices * hopsamp + fftSize;
-    let xReconstruct = math.random(lenSamples);
+    const timeSlices = magnitudeSpectrogram.shape[0];
+    const lenSamples = timeSlices * hopsamp + fftSize - 1;
+    let xReconstruct = tf.randomNormal([lenSamples])
 
     let n = iterations; // number of iterations of Griffin-Lim algorithm.
     while (n > 0) {
         n--;
         const reconstructionSpectrogram = stftForReconstruction(xReconstruct, fftSize, hopsamp);
-        const reconstructionAngle = reconstructionSpectrogram.map(frame =>
-            frame.map(complex => (complex ? Math.atan2(complex.im, complex.re) : 0))
-        );
-        const proposalSpectrogram = magnitudeSpectrogram.map((frame, i) =>
-            frame.map((magnitude, j) => {
-                const angle = reconstructionAngle[i] ? reconstructionAngle[i][j] : 0;
-                return math.multiply(magnitude, angle ? math.exp(math.complex(0, angle)) : 1);
-            })
-        );
-        xReconstruct = istftForReconstruction(proposalSpectrogram, fftSize, hopsamp);
+
+        const reconstructionSpectrogramData = reconstructionSpectrogram.dataSync()
+        const reconstructionAngle = []
+        const row = []
+        const rowLength = reconstructionSpectrogram.shape[1]
+        for (let i = 0; i < reconstructionSpectrogramData.length; i += 2) {
+            row.push(Math.atan2(reconstructionSpectrogramData[i + 1], reconstructionSpectrogramData[i]))
+            if ((i + 2) % (rowLength * 2) == 0) {
+                reconstructionAngle.push([...row]);
+                row.length = 0;
+            }
+        }
+        const zeroTensor = tf.fill(magnitudeSpectrogram.shape, 0)
+        const reconstructionAnglePhase = tf.complex(zeroTensor, reconstructionAngle)
+        const proposalSpectrogram = magnitudeSpectrogram.mul(reconstructionAnglePhase.exp())
+        const reconstructArray = istftForReconstruction(proposalSpectrogram, fftSize, hopsamp);
+        xReconstruct = tf.tensor(reconstructArray)
         console.log(`Reconstruction iteration: ${iterations - n}/${iterations}`);
     }
 
@@ -165,20 +176,22 @@ function reconstructSignalGriffinLim(magnitudeSpectrogram, fftSize, hopsamp, ite
 
 function saveAudioToFile(x, sampleRate, outFile = 'out.wav') {
 
-    const xMax = math.max(math.abs(x));
+    const xMax = x.abs().max();
     if (xMax > 1.0) {
         // Normalize the audio signal if its maximum value is greater than 1.0
-        x = x.map((val) => val / xMax);
+        x = x.div(xMax);
     }
 
     // Rescale to the range [-32767, 32767]
-    x = math.multiply(x, 32767.0);
+    x = x.mul(32767.0);
 
     // Create a WaveFile instance
     const wav = new WaveFile();
 
+    const waveData = x.dataSync();
+
     // Set WAV file parameters
-    wav.fromScratch(1, sampleRate, '16', x);
+    wav.fromScratch(1, sampleRate, '16', waveData);
 
     // Write the WaveFile instance to a file
     fs.writeFileSync(outFile, wav.toBuffer());
@@ -198,18 +211,3 @@ module.exports = {
     reconstructSignalGriffinLim,
     saveAudioToFile,
 };
-
-/*
-// Example usage:
-const inFile = 'input.wav';
-const outFile = 'output.wav';
-const expectedSampleRate = 44100;
-const fftSize = 1024;
-const hopSize = 256;
-const iterations = 100;
-
-const signal = getSignal(inFile, expectedSampleRate);
-const magnitudeSpectrogram = stftForReconstruction(signal, fftSize, hopSize);
-const reconstructedSignal = reconstructSignalGriffinLim(magnitudeSpectrogram, fftSize, hopSize, iterations);
-saveAudioToFile(reconstructedSignal, expectedSampleRate, outFile);
-*/

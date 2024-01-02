@@ -4,11 +4,13 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "transform": "node index.js"
+    "transform": "node index.js",
+    "reconstruct": "node demo.js"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@tensorflow/tfjs": "^4.15.0",
     "@tensorflow/tfjs-node": "3.1.0",
     "argparse": "^2.0.1",
     "byte-data": "^19.0.1",
