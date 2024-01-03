@@ -7,7 +7,7 @@ function runDemo() {
     const parser = new argparse.ArgumentParser();
     parser.add_argument('--in_file', { type: String, default: 'bkvhi.wav', help: 'Input WAV file' });
     parser.add_argument('--sample_rate_hz', { type: Number, default: 44100, help: 'Sample rate in Hz' });
-    parser.add_argument('--fft_size', { type: Number, default: 2048, help: 'FFT size' });
+    parser.add_argument('--fft_size', { type: Number, default: 256, help: 'FFT size' });
     parser.add_argument('--iterations', { type: Number, default: 300, help: 'Number of iterations to run' });
     parser.add_argument('--enable_filter', { action: 'store_true', help: 'Apply a low-pass filter' });
     parser.add_argument('--enable_mel_scale', { action: 'store_true', help: 'Convert to mel scale and back' });
@@ -29,7 +29,6 @@ function runDemo() {
     const hopsamp = args.fft_size / 8;
     // Compute the Short-Time Fourier Transform (STFT) from the audio file.
     const stftFull = audioUtilities.stftForReconstruction(input_signal, args.fft_size, hopsamp);
-
     // Note that the STFT is complex-valued. Therefore, to get the (magnitude)
     // spectrogram, we need to take the absolute value.
     const stftMag = stftFull.abs().square()
@@ -44,7 +43,9 @@ function runDemo() {
     const scaledStftMag = stftMag.mul(scale)
 
     stftModified = scaledStftMag;
-
+    console.log(stftModified.shape);
+    // audioUtilities.drawSpectrogram(in_file, stftModified)
+    
     // Undo the rescaling.
     const stftModifiedScaled = stftModified.mul(maximumMagnitude);
     const stftModifiedScaledRoot = stftModifiedScaled.sqrt();
@@ -66,7 +67,7 @@ function runDemo() {
     }
     // Save the reconstructed signal to a WAV file.
     audioUtilities.saveAudioToFile(reconstructTensor, args.sample_rate_hz);
-
+    
 }
 
 runDemo();

@@ -1,8 +1,8 @@
 const tf = require('@tensorflow/tfjs-node');
 const fs = require('fs');
 const math = require('mathjs');
-const fft = require('fft-js').fft;
 const WaveFile = require('wavefile').WaveFile;
+const { createCanvas, loadImage } = require('canvas');
 
 function hzToMel(fHz) {
     return 2595 * math.log10(1.0 + fHz / 700.0);
@@ -199,6 +199,69 @@ function saveAudioToFile(x, sampleRate, outFile = 'out.wav') {
     console.log(`Audio saved to ${outFile}`);
 }
 
+function drawSpectrogram(fileName, spectrograph) {
+    const strokeHeight = 1;
+    const canvasHeight = spectrograph[0].length * strokeHeight;
+    const canvasWidth = spectrograph.length;
+    const canvas = createCanvas(canvasWidth, canvasHeight);
+    const ctx = canvas.getContext('2d');
+    // init canvas
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    spectrograph.forEach((sequence, timeSeq) => {
+        sequence.forEach((value, frequency) => {
+            if (frequency > 110) value = 0
+            let hue = 0;
+            let sat = '0%';
+            let lit = (value > 100 ? 100 : value) + '%'; //100 is selected as the maximum possible magnitude
+
+            ctx.beginPath();
+            ctx.strokeStyle = `hsl(${hue}, ${sat}, ${lit})`;
+            ctx.moveTo(timeSeq, canvasHeight - (frequency * strokeHeight));
+            ctx.lineTo(timeSeq, canvasHeight - (frequency * strokeHeight + strokeHeight));
+            ctx.stroke();
+        });
+    });
+    const outPath = './audio-files/' + fileName.replace('.wav', '.png')
+    const out = fs.createWriteStream(outPath);
+    const stream = canvas.createPNGStream();
+    stream.pipe(out);
+    out.on('finish', (err) => {
+        if (err) { return callback(err); }
+        console.log('The PNG file was created.')
+    });
+};
+
+function readPNGSpectrogram(fileName) {
+    const filePath = './audio-files/' + fileName
+    loadImage(filePath)
+        .then((image) => {
+            const imgHeight = image.height
+            const imgWidth = image.width
+
+            const canvas = createCanvas(imgWidth, imgHeight);
+            const ctx = canvas.getContext('2d');
+
+            ctx.drawImage(image, 0, 0);
+
+            const imageData = ctx.getImageData(0, 0, imgWidth, imgHeight).data
+
+            const splitPixels = []
+
+            for (let i = 0; i < imageData.length; i += 4) {
+                const pixel = imageData.slice(i, i + 4);
+                splitPixels.push(pixel);
+            }
+
+            const pixels = splitPixels.map(RGBToHSL)
+            console.table(pixels)
+        })
+        .catch(err => {
+            console.log('oh no!', err)
+        })
+}
+
+
 module.exports = {
     hzToMel,
     melToHz,
@@ -210,4 +273,6 @@ module.exports = {
     getSignal,
     reconstructSignalGriffinLim,
     saveAudioToFile,
+    drawSpectrogram,
+    readPNGSpectrogram
 };
